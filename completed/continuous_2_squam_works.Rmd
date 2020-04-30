@@ -1,0 +1,198 @@
+---
+title: "cont_2"
+author: "Ben Holt"
+date: "4/26/2020"
+output: html_document
+---
+```{r}
+library(RCurl)
+library(ape)
+library(geiger)
+sqTree<-read.tree(text=getURL("https://raw.githubusercontent.com/lukejharmon/pcm/master/datafiles/squamate.phy"))
+plot(sqTree)
+sqTree$tip.label
+sqData<-read.csv(text=getURL("https://raw.githubusercontent.com/lukejharmon/pcm/master/datafiles/brandley_table.csv"))
+```
+
+Getting limbless traits...
+```{r}
+limbless<-as.numeric(sqData[,"FLL"]==0 & sqData[,"HLL"]==0)
+sum(limbless)
+# get names that match
+nn<-sqData[,1]
+nn2<-sub(" ", "_", nn)
+names(limbless)<-nn2
+body<-sqData$SVL
+tail.leng<-sqData$TL
+dats<-cbind(limbless, body, tail.leng)
+
+
+td<-treedata(sqTree, dats)
+tree<-td$phy
+```
+
+visualizing, make sure the output lines up with what I want
+```{r}
+library(phytools)
+VisualizeData <- function(phy, data) {
+  blah<-as.factor(setNames(data[,1],rownames(data)))
+  dots<-dotTree(phy, blah,colors=setNames(c("blue","green"),levels(blah)), ftype="i",fsize=0.7)
+  cbind(phy$tip.label, data)
+}
+VisualizeData(phy=td$phy, data = td$data)
+
+# or alternatively
+plotSimmap(make.simmap(td$phy, td$data[, 1]), pts=FALSE, fsize=0.8)
+
+```
+
+
+```{r}
+dat<-data.frame(td$data)
+row.names(dat)
+body<-dat$body
+tl<-dat$tail.leng
+names(tl)<-row.names(dat)
+names(body)<-NULL
+names(body)<-row.names(dat)
+is.ultrametric(tree)
+tree<-force.ultrametric(tree, method="nnls")
+is.ultrametric(tree)
+
+# Brownian motion
+BM1 <- geiger::fitContinuous(tree, tl, model="BM") 
+print(BM1)
+
+# rate of evolution is 129.0699 in 139.88 units of time
+```
+
+```{r}
+
+OU1 <- fitContinuous(tree, tl, model="OU")
+print(OU1)
+par(mfcol=(c(1,2)))
+plot(tree, show.tip.label=F)
+
+ou.tree <- rescale(tree, model="OU", OU1$opt$alpha)
+plot(ou.tree, show.tip.label = F)
+```
+
+```{r}
+AIC.BM1 <- BM1$opt$aic
+AIC.OU1 <- OU1$opt$aic
+delta_aic<-function(x) x-x[which(x==min(x))]
+delta_aic(c(AIC.BM1, AIC.OU1))
+delta.AIC.BM1 <-42.23885
+delta.AIC.OU1 <- 0
+## BM1 better model
+```
+
+```{r}
+data.s<-as.data.frame(td$data)
+data.s$Genus_spec<-rownames(data.s)
+data.s<-data.frame(Genus_spec=data.s$Genus_spec, limbs=data.s$limbless, body=data.s$body, tl=data.s$tail.leng)
+tree.s<-tree
+one.discrete.char <- as.numeric(data.s$limbs)
+reconstruction.info <- ace(one.discrete.char, tree.s, type="discrete", method="ML", CI=TRUE)
+best.states <- colnames(reconstruction.info$lik.anc)[apply(reconstruction.info$lik.anc, 1, which.max)]
+length(best.states)
+tree.s$Nnode
+tree2s<-tree.s
+tree2s$node.label<-best.states
+```
+
+```{r}
+oudata<-data.frame(Genus_spec=data.s$Genus_spec, reg=one.discrete.char, tail=data.s$tl)
+oudata
+labeled.tree <-tree2s
+nodeBased.OUMV <- OUwie(tree2s, oudata,model="OUMV", simmap.tree=FALSE, diagn=FALSE, root.age = NULL)
+print(nodeBased.OUMV)
+```
+
+
+```{r}
+models <- c("BM1","BMS","OU1","OUM","OUMV","OUMA","OUMVA")
+tree2s$tip.label
+
+runmod<-function(phy, data, models){
+  mod<-OUwie(phy, data, models, simmap.tree = F, diagn = F, root.age = NULL)
+}
+results<- lapply(models, runmod, phy = tree2s, data = oudata)
+results$AICc
+results
+AICc.values<-sapply(results, "[[", "AICc")
+names(AICc.values)<-models
+AICc.values<-AICc.values-min(AICc.values)
+results
+
+print(AICc.values) #The best model is the one with smallest AICc score
+## BMS
+best<-results[[which.min(AICc.values)]] #store for later
+
+print(best) #prints info on best model
+```
+
+```{r}
+alpha.values<-seq(from= 8.517268e-03, to= 0.02, length.out=50)
+
+likelihood.values <- rep(NA, length(alpha.values))
+for (iteration in sequence(length(alpha.values))) {
+    likelihood.values[iteration] <- OUwie.fixed(tree2s, oudata, model="OUMV", alpha=rep(alpha.values[iteration],2), sigma.sq=best$solution[2,], theta=best$theta[,1])$loglik
+}
+pos<-max(likelihood.values)
+
+
+
+dev.off()
+plot(x= alpha.values , y= likelihood.values, xlab="alpha", ylab="likelihood", type="l", bty="n", xlim = c(0.008, 0.02), ylim = c(-1520, -1459))
+points(x=best$solution[1,1], y=best$loglik, pch=16, col="red")
+text(x=best$solution[1,1], y=best$loglik, "unconstrained best", pos=4, col="red")
+
+abline(h=, lty="dotted") #Two log-likelihood
+
+```
+
+```{r}
+require("akima")
+nreps<-400
+theta1.points<-c(best$theta[1,1], rnorm(nreps-1, best$theta[1,1], 5*best$theta[1,2])) #center on optimal value, have extra variance
+theta2.points<-c(best$theta[2,1], rnorm(nreps-1, best$theta[2,1], 5*best$theta[2,2])) #center on optimal value, have extra variance
+likelihood.values<-rep(NA,nreps)
+
+for (iteration in sequence(nreps)) {
+  likelihood.values[iteration] <- OUwie.fixed(tree2s, oudata, model="OUMV", alpha=best$solution[1,], sigma.sq=best$solution[2,], theta=c(theta1.points[iteration], theta2.points[iteration]))$loglik
+}
+
+likelihood.differences<-(-(likelihood.values-max(likelihood.values)))
+```
+
+
+We are interpolating here: contour wants a nice grid. But by centering our simulations on the MLE values, we made sure to sample most thoroughly there
+```{r}
+interpolated.points<-interp(x=theta1.points, y=theta2.points, z= likelihood.differences, linear=FALSE, extrap=TRUE, xo=seq(min(theta1.points), max(theta1.points), length = 400), yo=seq(min(theta2.points), max(theta2.points), length = 400))
+
+contour(interpolated.points, xlim=range(c(theta1.points, theta2.points)),ylim=range(c(theta1.points, theta2.points)), xlab="Theta 1", ylab="Theta 2", levels=c(2,5,10),add=FALSE,lwd=1, bty="n", asp=1)
+
+points(x=best$theta[1,1], y=best$theta[2,1], col="red", pch=16)
+
+points(x=oudata$body[which(oudata$reg==1)],y=rep(min(c(theta1.points, theta2.points)), length(which(oudata$reg==1))), pch=18, col=rgb(0,0,0,.3)) #the tip values in regime 1, plotted along x axis
+points(y=oudata$body[which(oudata$reg==2)],x=rep(min(c(theta1.points, theta2.points)), length(which(oudata$reg==2))), pch=18, col=rgb(0,0,0,.3)) #the tip values in regime 2, plotted along y axis
+```
+
+
+
+```{r}
+library(phytools)
+trait.ordered<-data.frame(oudata[,2], oudata[,2],row.names=oudata[,1])
+trait.ordered<- trait.ordered[tree2s$tip.label,]
+z<-trait.ordered[,1]
+names(z)<-rownames(trait.ordered)
+tree.mapped<-make.simmap(tree2s,z,model="ER",nsim=1)
+leg<-c("black","red")
+names(leg)<-c(1,2)
+plotSimmap(tree.mapped,leg,pts=FALSE,ftype="off", lwd=1)
+
+simmapBased<-OUwie(tree.mapped,oudata,model="OUMV", simmap.tree=TRUE, diagn=FALSE)
+print(simmapBased) ## AICc 2958 
+print(best) #2931  #better
+```

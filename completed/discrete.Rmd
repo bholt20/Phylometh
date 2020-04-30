@@ -1,0 +1,115 @@
+---
+title: "Discrete Trees"
+output: html_document
+---
+Let's say were interested in direct vs larval development in Desmognathine salamanders.
+```{r}
+library(geiger)
+## getting a tree for Desmognathus salamanders. Testing the evolution of larval vs direct development
+GetTreeFromOpenTree <- function(species) {
+    library(ape)
+    library(rotl)
+  spec.id <- tnrs_match_names(species)$ott_id 
+  spec.tree <- tol_subtree(ott_id=spec.id)}
+tree<-GetTreeFromOpenTree('Desmognathus')
+tree
+plot.phylo(tree)
+tree<-ape::compute.brlen(tree)
+labs<-tree$tip.label
+write.csv(labs, file = 'des_labs.csv')
+```
+Now add the discrete trait in as a column and add it back in
+```{r}
+discrete<-read.csv(file="/Users/benjaminholt/Desktop/Spring2020/Phylogenetics/des_dev.csv", stringsAsFactors = F)
+```
+
+select nodes to extract and trim the discrete data accordingly
+```{r}
+plot.phylo(tree)
+tree2<-extract.clade(tree, root.edge = 0, collapse.singles = TRUE,interactive = TRUE)
+plot.phylo(tree2)
+CleanData <- function(phy, data) {
+  plot.phylo(phy)
+  data2<-data
+  data2<-data2[, 2:ncol(data2)]
+  rownames(data2)<-data[, 1]
+  tree.dat<-treedata(tree2, data2, sort = T)
+  return(tree.dat)
+}
+cleaned.tree<-CleanData(phy=tree, data = discrete)
+tree<-cleaned.tree$phy
+dat<-cleaned.tree$data
+```
+
+Make sure the traits of interest pop up where they should...
+
+```{r}
+library(phytools)
+VisualizeData <- function(phy, data) {
+  blah<-as.factor(setNames(data[,1],rownames(data)))
+  dots<-dotTree(phy, blah,colors=setNames(c("blue","green"),levels(blah)), ftype="i",fsize=0.7)
+}
+
+VisualizeData(phy=tree, data =dat) ## this will give you an error, but still plots what I need
+```
+
+
+```{r}
+library(phangorn)
+plot.phylo(tree)
+dat<-dat[,1]
+levels(dat)<-c('larval', 'direct')
+cleaned.discrete.phyDat <- phangorn::phyDat(dat, type="USER", levels = levels(dat)) #phyDat is a data format used by phangorn
+anc.p <- phangorn::ancestral.pars(tree, cleaned.discrete.phyDat)
+plotAnc(tree, anc.p, 1)
+```
+
+Not a great example because of the trait i used...
+```{r}
+anc.ml <- ancestral.pml(pml(tree, cleaned.discrete.phyDat), type="ml")
+summary(anc.ml)
+
+plotAnc(tree, anc.ml, 1)
+```
+
+How does this differ from parsimony?
+
+# Parsimony applies the framework that the simplest explanation for taxonomic observation is most correct. This can be misleading from ancestral state because a single evolutionary event that causes changes early in the clade does not always represent the ancestral state. 
+
+Why does it differ from parsimony?
+# it relies heavily on the trait observed at the tips and less on the likelihood of the branches. For example, if 80% of a clade have trait A, parsimony would say trait A is ancestral, however with likelihood we can parse out and show that trait A is most commonly due to a change that had large effects, followed by diversification within that clade.
+
+What does uncertainty mean?
+Now, to the biological questions. For many of these, corHMM will be a useful package. Do the following analyses:
+
+How can you estimate transition rates between states? Do it.
+How could you examine if transition rates are equal? 
+Think about the Lewis (2001) MKV model. Are your traits all variable? Will using this make sense for your data? Try using it. Do results change?
+
+```{r}
+library(corHMM)
+dat<-cleaned.tree$data
+dat<-as.data.frame(dat)
+lh<-dat$life_history
+names(lh)
+mod1<-fitDiscrete(tree, lh, model = 'ER')
+lh2<-as.numeric(lh)
+is.rooted(tree)
+treeu<-unroot(tree)
+is.rooted(treeu)
+mod2<-lewisMkv(treeu, lh2)
+print(mod1)
+```
+
+
+How could you test order of state evolution?
+
+####How can you estimate transition rates between states ? By using the fitdiscrete function in geiger(## we can do that by fitting a  model with different backward & forward rates
+
+```{r}
+
+ard.mod<-fitDiscrete(cleaned.tree$phy, cleaned.tree$data[,1], model = 'ARD')
+print(ard.mod)
+
+````
+
